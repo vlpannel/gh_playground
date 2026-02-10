@@ -10,7 +10,7 @@ on:
 
 jobs:
   if_merged:
-    if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release/')
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
