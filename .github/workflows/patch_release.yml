@@ -1,0 +1,42 @@
+name: Mark patches
+run-name: Mark new updates to a release branch as patches given the release branch number
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - 'release/**'
+
+jobs:
+  if_merged:
+    if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.head_ref }}
+      - name: Get metrics and docs for release
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "would be getting tests here..." # ./ci/run_tests.sh
+          touch metrics.txt
+          echo "would be building docs here..." # ./util/site/build-docs.sh
+          touch site.txt
+          git add metrics site
+          git commit -m "Get results for new patch"
+          git push
+      - name: Add tag for latest patch
+        working-directory: ${{ github.workspace }}
+        run: |
+          latest_version=$(git describe --tags --abbrev=0 --match "release/*" HEAD)
+          if [[ $latest_version =~ release/([^p$]*).p([0-9]+) ]]; then
+            release_date="${BASH_REMATCH[1]}"
+            latest_patch=$(( "${BASH_REMATCH[2]}" + 1))
+            git tag release/$release_date.p$latest_patch
+            git push --tags
+          fi
+        shell: bash
+      - name: Create release on GitHub
+        run: echo "making release..."
+        shell: bash
