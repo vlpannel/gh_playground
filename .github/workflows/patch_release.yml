@@ -34,12 +34,13 @@ jobs:
       - name: Add tag for latest patch
         working-directory: ${{ github.workspace }}
         run: |
+          git pull --tags -f
           latest_version=$(git describe --tags --abbrev=0 --match "release/*" HEAD)
           if [[ $latest_version =~ release/([^p$]*).p([0-9]+) ]]; then
             release_date="${BASH_REMATCH[1]}"
             latest_patch=$(( "${BASH_REMATCH[2]}" + 1))
             git tag -f release/$release_date.p$latest_patch
-            git push --tags
+            git push --tags --force
           fi
         shell: bash
       - name: Create release on GitHub
