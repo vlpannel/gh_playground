@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.head_ref }}
+          fetch-depth: 0  # is this reasonable number of commits between patches?
+          fetch-tags: true
       - run: |
           git config user.name "mein_bott"
           git config user.email "vpannell@zerorisc.com"
@@ -26,7 +28,7 @@ jobs:
         run: |
           echo "would be getting tests here..." "$(date)" > ./metrics.txt # ./ci/run_tests.sh
           echo "would be building docs here..." "$(date)" > ./site.txt # ./util/site/build-docs.sh
-          git add metrics.txt site.txt
+          git add -f metrics.txt site.txt
           git commit -m "Get results for new patch"
           git push
       - name: Add tag for latest patch
