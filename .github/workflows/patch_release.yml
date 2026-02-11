@@ -43,5 +43,11 @@ jobs:
           fi
         shell: bash
       - name: Create release on GitHub
-        run: echo "making release..."
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "making release..."
+          git pull
+          git fetch --tags
+          gh release create $(git describe --tags --abbrev=0 --match "release/*" HEAD) --generate-notes --fail-on-no-commits
         shell: bash
