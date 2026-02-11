@@ -24,8 +24,8 @@ jobs:
       - name: Get metrics and docs for release
         working-directory: ${{ github.workspace }}
         run: |
-          echo "would be getting tests here..." > ./metrics.txt # ./ci/run_tests.sh
-          echo "would be building docs here..." > ./site.txt # ./util/site/build-docs.sh
+          echo "would be getting tests here..." "$(date)" > ./metrics.txt # ./ci/run_tests.sh
+          echo "would be building docs here..." "$(date)" > ./site.txt # ./util/site/build-docs.sh
           git add metrics.txt site.txt
           git commit -m "Get results for new patch"
           git push
