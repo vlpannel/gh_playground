@@ -1,0 +1,231 @@
+# Copyright lowRISC contributors (OpenTitan project).
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+name: Prepare environment
+description: Install dependencies and prepare environment needed for OpenTitan
+
+inputs:
+  verilator-version:
+    description: Verilator version to install
+    required: true
+    default: '4.210'
+  verilator-path:
+    description: Path at which to install Veriltator
+    required: true
+    default: /tools/verilator
+  verible-version:
+    description: Verible version to install
+    required: true
+    default: 'v0.0-3622-g07b310a3'
+  verible-path:
+    description: Path at which to install Verible
+    required: true
+    default: /tools/verible
+  install-verible:
+    description: Install verbile
+    default: false
+  configure-bazel:
+    description: Configure Bazel to use remote cache
+    required: true
+    default: true
+  working-directory:
+    description: Working directory
+    default: ${{ github.workspace }}
+  vivado-version:
+    description: Vivado version to configure, if any.
+    default: ''
+  license-host:
+    description: Hostname of the license server.
+    default: 'license-server'
+  license-port:
+    description: Port on license-server that the license server is serving on.
+    default: '2100'
+  fpga:
+    description: FPGA board type to prepare, if any.
+    default: ''
+  vivado-lab-version:
+    description: Vivado Lab Edition version for FPGA bootstrapping, if required.
+    default: '2024.2'
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      run: |
+        sudo apt update --fix-missing
+        grep '^[^#]' apt-requirements.txt | xargs sudo apt install -y
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install UTF-8 language pack
+      run: |
+        sudo apt install -y language-pack-gnome-en-base
+        echo "LANG=en_US.UTF-8" >> "$GITHUB_ENV"
+        echo "LANGUAGE=en.UTF-8" >> "$GITHUB_ENV"
+      shell: bash
+
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: '0.7.14'
+        enable-cache: true
+        cache-dependency-glob: |
+          ${{ inputs.working-directory }}/pyproject.toml
+          ${{ inputs.working-directory }}/python-requirements.txt
+
+    - name: Install Python
+      shell: bash
+      run: |
+        # Install python with a retry to work around broken pipe errors
+        source ci/scripts/utils.sh
+        retry 5 2 2 uv python install 3.10
+        # Create a virtual environment for UV
+        uv venv ~/.local/share/venv
+        echo "$HOME/.local/share/venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$HOME/.local/share/venv" >> "$GITHUB_ENV"
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        uv pip install -r python-requirements.txt --require-hashes
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install Verilator
+      run: |
+        VERILATOR_TAR="verilator-v${{ inputs.verilator-version }}.tar.gz"
+        VERILATOR_URL="https://storage.googleapis.com/verilator-builds/${VERILATOR_TAR}"
+        source ci/scripts/utils.sh
+        sudo mkdir -p "${{ inputs.verilator-path }}"
+        retry 5 2 2 curl -sSfL "$VERILATOR_URL" -o "${{ runner.temp }}/${VERILATOR_TAR}"
+        sudo tar -C "${{ inputs.verilator-path }}" -xvzf "${{ runner.temp }}/${VERILATOR_TAR}"
+        echo "${{ inputs.verilator-path }}/v${{ inputs.verilator-version }}/bin" >> "$GITHUB_PATH"
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install Verible
+      if: inputs.install-verible == 'true'
+      run: |
+        VERIBLE_TAR="verible-${{ inputs.verible-version }}-linux-static-x86_64.tar.gz"
+        VERIBLE_URL="https://github.com/chipsalliance/verible/releases/download/${{ inputs.verible-version }}/${VERIBLE_TAR}"
+        source ci/scripts/utils.sh
+        sudo mkdir -p "${{ inputs.verible-path }}"
+        retry 5 2 2 curl -sSfL "$VERIBLE_URL" -o "${{ runner.temp }}/${VERIBLE_TAR}"
+        sudo tar -C "${{ inputs.verible-path }}" -xvzf "${{ runner.temp }}/${VERIBLE_TAR}" --strip-components=1
+        # Fixup bin permission which is broken in tarball.
+        sudo chmod 755 "${{ inputs.verible-path }}/bin"
+        echo "${{ inputs.verible-path }}/bin" >> "$GITHUB_PATH"
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    # Log into Google Cloud using workload_identity_provider.
+    - id: auth
+      name: Authenticate to Google Cloud
+      # This uses secrets, so it does not work on pull requests from forks.
+      if: github.event_name != 'pull_request'
+      uses: google-github-actions/auth@71fee32a0bb7e97b4d33d548e7d957010649d8fa # v2.1.3
+      with:
+        workload_identity_provider: projects/951672875677/locations/global/workloadIdentityPools/github-actions-pool/providers/${{ github.event.repository.name }}
+        service_account: ${{ github.event.repository.name }}-gh-actions-sa@expo-caches-3492dd4e.iam.gserviceaccount.com
+
+
+    # The above action creates a credential file in workspace and it doesn't provide a way to configure
+    # it. This influences with a few scripts that assume clean workspace, and introduce security risk
+    # that it may be exposed when uploading to buckets.
+    - name: Move Google credentials out from workspace
+      if: github.event_name != 'pull_request'
+      run: |
+        SOURCE=${{ steps.auth.outputs.credentials_file_path }}
+        TARGET=${{ runner.temp }}/$(basename "$SOURCE")
+        mv $SOURCE $TARGET
+        echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=$TARGET" >> $GITHUB_ENV
+        echo "GOOGLE_APPLICATION_CREDENTIALS=$TARGET" >> $GITHUB_ENV
+        echo "GOOGLE_GHA_CREDS_PATH=$TARGET" >> $GITHUB_ENV
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    - uses: google-github-actions/setup-gcloud@v2
+      if: github.event_name != 'pull_request'
+
+    - name: Configure ~/.bazelrc
+      if: inputs.configure-bazel == 'true'
+      run: |
+        echo "common --remote_cache=https://storage.googleapis.com/expo-bazel-cache" >> ~/.bazelrc
+        # Inject the OS version into a parameter used in the action key computation to
+        # avoid collisions between different operating systems in the caches.
+        # See #14695 for more information.
+        echo "build --remote_default_exec_properties=OSVersion=\"$(lsb_release -ds)\"" >> ~/.bazelrc
+
+        if ${{ github.event_name != 'pull_request' }}; then
+          echo "Will upload to the cache." >&2
+        else
+          echo "Download from cache only." >&2
+          echo "build --remote_upload_local_results=false" >> ~/.bazelrc
+        fi
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Install merge-junit
+      run: |
+        MERGE_JUNIT_PATH="/tools/merge-junit"
+        MERGE_JUNIT_TAR="merge-junit-v0.2.1-x86_64-unknown-linux-musl.tar.gz"
+        MERGE_JUNIT_URL="https://github.com/tobni/merge-junit/releases/download/v0.2.1/${MERGE_JUNIT_TAR}"
+        MERGE_JUNIT_SHA256="5c6a63063f3a155ea4da912d5cae2ec4a89022df31d7942f2aba463ee4790152"
+
+        source ci/scripts/utils.sh
+        retry 5 2 2 curl -fLSs -o "${{ runner.temp }}/${MERGE_JUNIT_TAR}" "$MERGE_JUNIT_URL"
+        HASH=$(sha256sum "/${{ runner.temp }}/$MERGE_JUNIT_TAR" | awk '{print $1}')
+        if [[ "$HASH" != "$MERGE_JUNIT_SHA256" ]]; then
+          echo "The hash of merge-junit does not match" >&2
+          echo "$HASH != $MERGE_JUNIT_SHA256" >&2
+          exit 1
+        fi
+
+        sudo mkdir -p $MERGE_JUNIT_PATH
+        sudo chmod 777 $MERGE_JUNIT_PATH
+        tar -C $MERGE_JUNIT_PATH -xvzf "${{ runner.temp }}/${MERGE_JUNIT_TAR}" --strip-components=1
+        echo $MERGE_JUNIT_PATH >> "$GITHUB_PATH"
+        rm "${{ runner.temp }}/${MERGE_JUNIT_TAR}"
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    # Configure use of bitstream cache.
+    - name: Configure bitstream cache.
+      run: cp util/git/hooks/post-checkout .git/hooks/
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+
+    # Setup FPGA, if requested.
+    - name: FPGA setup
+      if: inputs.fpga != ''
+      run: |
+         # Install dependencies
+         sudo apt install -y libudev-dev libclang-dev libftdi1-dev
+         # Add Vivado Lab binary directory to path
+         echo "/tools/Xilinx/Vivado_Lab/${{ inputs.vivado-lab-version }}/bin" >> $GITHUB_PATH
+      shell: bash
+    - name: Run FPGA set-pll and clear bitstream
+      if: inputs.fpga == 'cw310' || inputs.fpga == 'cw340'
+      run: |
+         # Run set-pll command for FPGA.
+         ./bazelisk.sh run //sw/host/opentitantool -- --interface=${{ inputs.fpga }} --logging debug fpga set-pll || true
+         # Clear FPGA bitstream.
+         ./bazelisk.sh run //sw/host/opentitantool -- --rcfile= --interface=${{ inputs.fpga }} fpga clear-bitstream
+      shell: bash
+
+    # Setup Vivado, if requested.
+    - name: Vivado setup
+      if: inputs.vivado-version != ''
+      run: |
+         # Install dependencies
+         sudo apt install -y libudev-dev jq
+         # Link ld to what Xilinx expects
+         sudo ln /lib64/ld-linux-x86-64.so.2 /lib64/ld-lsb-x86-64.so.3
+         # Add Vivado binary directory to path
+         echo "/tools/Xilinx/Vivado/${{ inputs.vivado-version }}/bin" >> $GITHUB_PATH
+      shell: bash
+    - name: Set environment variable for license server
+      if: inputs.vivado-version != ''
+      run: |
+        LICENSE_HOST="$(cat /etc/ci/${{ inputs.license-host }}/hostname)"
+        echo "XILINXD_LICENSE_FILE=${{ inputs.license-port }}@${LICENSE_HOST}" >> $GITHUB_ENV
+      shell: bash
