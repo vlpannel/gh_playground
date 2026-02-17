@@ -1,0 +1,35 @@
+name: Create new branch
+run-name: Create foo branch due to ${{ github.event_name }}
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' 
+    - cron: '*/6 * * * *' 
+  workflow_call:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  create_foo_branch:
+    name: Create foo branch
+    runs-on: ubuntu-22.04
+    if: ${{ github.repository == 'vlpannel/gh_playground' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          ref: 'master'
+      - name: Prepare environment
+        uses: ./.github/actions/prepare-env
+      - name: Show environment
+        run: ./ci/scripts/show-env.sh
+      - name: Make branch
+        shell: bash
+        run: |
+          foo=$(date -d "+7 minutes" +%H:%M)
+          git tag -af bar.$foo -m "[automated] tag bar with $foo"
+          git push --tags
+          git branch foo/$foo
+          git push --branches
