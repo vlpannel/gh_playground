@@ -1,0 +1,44 @@
+name: Upload Documentation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  pages: write
+
+jobs:
+  select-and-build:
+    name: Config docs
+    runs-on: 'ubuntu-slim'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Make docs dir
+        run: mkdir docs
+      - name: Copy docs to doc dir
+        run: |
+          cp ./README.md docs/
+          echo '<head /><body><p>test</p><p><a href="./README.md">README</a></p></body>' > docs/index.html
+      - name: Upload files as artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          name: docs
+          path: docs/
+
+  upload:
+    name: Deploy docs
+    runs-on: 'ubuntu-slim'
+    needs: select-and-build
+    environment:
+      name: github-pages
+      url: ${{steps.deployment.outputs.page_url}}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: docs
+      - name: Print output URL
+        run: cat $url
